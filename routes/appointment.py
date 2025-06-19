@@ -11,14 +11,16 @@ router = APIRouter()
 async def create_appointment(data: AppointmentCreate):
     appointment_dict = data.dict()
 
-    # Convert event_date + event_time to event_datetime
-    if isinstance(appointment_dict["event_date"], date) and isinstance(appointment_dict["event_time"], time):
-        event_datetime = datetime.combine(appointment_dict["event_date"], appointment_dict["event_time"])
-        appointment_dict["event_datetime"] = event_datetime
+    # Combine event_date and event_start_time/end_time into datetime objects
+    if isinstance(appointment_dict["event_date"], date) and isinstance(appointment_dict["event_start_time"], time):
+        appointment_dict["event_start_datetime"] = datetime.combine(appointment_dict["event_date"], appointment_dict["event_start_time"])
+    if isinstance(appointment_dict["event_date"], date) and isinstance(appointment_dict["event_end_time"], time):
+        appointment_dict["event_end_datetime"] = datetime.combine(appointment_dict["event_date"], appointment_dict["event_end_time"])
 
-    # Remove incompatible fields
+    # Remove raw date/time fields if not needed
     appointment_dict.pop("event_date", None)
-    appointment_dict.pop("event_time", None)
+    appointment_dict.pop("event_start_time", None)
+    appointment_dict.pop("event_end_time", None)
 
     result = appointments_collection.insert_one(appointment_dict)
     return {"message": "Appointment created", "id": str(result.inserted_id)}
@@ -44,10 +46,14 @@ async def delete_appointment(id: str):
 async def update_appointment(id: str, data: AppointmentCreate):
     update_data = data.dict()
 
-    if isinstance(update_data["event_date"], date) and isinstance(update_data["event_time"], time):
-        update_data["event_datetime"] = datetime.combine(update_data["event_date"], update_data["event_time"])
+    if isinstance(update_data["event_date"], date) and isinstance(update_data["event_start_time"], time):
+        update_data["event_start_datetime"] = datetime.combine(update_data["event_date"], update_data["event_start_time"])
+    if isinstance(update_data["event_date"], date) and isinstance(update_data["event_end_time"], time):
+        update_data["event_end_datetime"] = datetime.combine(update_data["event_date"], update_data["event_end_time"])
+
     update_data.pop("event_date", None)
-    update_data.pop("event_time", None)
+    update_data.pop("event_start_time", None)
+    update_data.pop("event_end_time", None)
 
     result = appointments_collection.update_one(
         {"_id": ObjectId(id)},
@@ -64,8 +70,8 @@ async def monthly_summary(company_id: str):
         {"$match": {"company_id": company_id}},
         {"$group": {
             "_id": {
-                "month": {"$month": "$event_datetime"},
-                "year": {"$year": "$event_datetime"},
+                "month": {"$month": "$event_start_datetime"},
+                "year": {"$year": "$event_start_datetime"},
             },
             "total_appointments": {"$sum": 1},
             "total_amount": {"$sum": {"$toDouble": "$booking_amount"}},
@@ -75,7 +81,6 @@ async def monthly_summary(company_id: str):
     result = list(appointments_collection.aggregate(pipeline))
     total_appointments = appointments_collection.count_documents({"company_id": company_id})
 
-    # Total of all booking amounts
     total_amount = sum(doc["total_amount"] for doc in result)
 
     return {
