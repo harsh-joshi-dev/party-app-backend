@@ -6,7 +6,8 @@ class AppointmentCreate(BaseModel):
     customer_name: str
     customer_phone: str
     event_date: date
-    event_time: time
+    event_start_time: time
+    event_end_time: time
     hours: str
     tags: Optional[List[str]] = []
     booking_amount: str
@@ -14,5 +15,6 @@ class AppointmentCreate(BaseModel):
     cake_weight: Optional[str] = None
     note: Optional[str] = None
     company_id: str
-    payment: bool
+    payment_status: str
     payment_type: str
+    event_type: str
