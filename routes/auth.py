@@ -20,9 +20,15 @@ async def get_all_companies():
     users = db["users"].find()
     result = []
     for user in users:
-        user["_id"] = str(user["_id"])  # Convert ObjectId to string
-        user["password"] = "********"   # Hide password
-        result.append(user)
+        user_dict = {
+            "_id": str(user.get("_id")),
+            "company_name": user.get("company_name", ""),
+            "address": user.get("address", ""),
+            "username": user.get("username", ""),
+            "phone": user.get("phone", ""),
+            "alt_phone": user.get("alt_phone", ""),
+        }
+        result.append(user_dict)
     return {"companies": result}
 
 @router.post("/login")
