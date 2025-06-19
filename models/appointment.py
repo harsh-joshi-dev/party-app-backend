@@ -8,11 +8,11 @@ class AppointmentCreate(BaseModel):
     customer_phone: str
     event_date: date
     event_time: time
-    hours: int
+    hours: str
     tags: Optional[List[str]] = []
-    booking_amount: float
+    booking_amount: str
     need_cake: bool
-    cake_weight: Optional[float] = None
+    cake_weight: Optional[str] = None
     note: Optional[str] = None
     company_id: str
     payment: bool
