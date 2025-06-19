@@ -25,21 +25,65 @@ async def create_appointment(data: AppointmentCreate):
     result = appointments_collection.insert_one(appointment_dict)
     return {"message": "Appointment created", "id": str(result.inserted_id)}
 
-# Get All Appointments
+# Mark Event as Completed
+@router.put("/complete/{id}")
+async def mark_event_completed(id: str):
+    result = appointments_collection.update_one(
+        {"_id": ObjectId(id)},
+        {"$set": {"event_completed": "true"}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return {"message": "Event marked as completed"}
+
+
 @router.get("/")
 async def get_appointments(company_id: str):
-    appointments = list(appointments_collection.find({"company_id": company_id}))
+    now = datetime.now()
+    appointments = list(appointments_collection.find({
+        "company_id": company_id,
+        "event_completed": {"$ne": "deleted"}
+    }))
+
+    # Auto-mark past events as completed
+    for appt in appointments:
+        if appt.get("event_end_datetime") and isinstance(appt["event_end_datetime"], datetime):
+            if appt["event_end_datetime"] < now and appt.get("event_completed") != "true":
+                appointments_collection.update_one(
+                    {"_id": appt["_id"]},
+                    {"$set": {"event_completed": "true"}}
+                )
+                appt["event_completed"] = "true"
+
+    # Format _id to string
     for item in appointments:
         item["_id"] = str(item["_id"])
-    return appointments
+
+    return {
+        "active": [a for a in appointments if a.get("event_completed") != "true"],
+        "completed": [a for a in appointments if a.get("event_completed") == "true"]
+    }
 
 # Delete Appointment
 @router.delete("/{id}")
 async def delete_appointment(id: str):
-    result = appointments_collection.delete_one({"_id": ObjectId(id)})
-    if result.deleted_count == 0:
+    result = appointments_collection.update_one(
+        {"_id": ObjectId(id)},
+        {"$set": {"event_completed": "deleted"}}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")
-    return {"message": "Deleted"}
+    return {"message": "Appointment marked as deleted"}
+
+@router.get("/deleted")
+async def get_deleted_appointments(company_id: str):
+    deleted = list(appointments_collection.find({
+        "company_id": company_id,
+        "event_completed": "deleted"
+    }))
+    for item in deleted:
+        item["_id"] = str(item["_id"])
+    return deleted
 
 # Update Appointment
 @router.put("/{id}")
