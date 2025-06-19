@@ -15,6 +15,16 @@ async def register_user(data: UserCreate):
     db["users"].insert_one(user)
     return {"message": "User registered successfully"}
 
+@router.get("/companies")
+async def get_all_companies():
+    users = db["users"].find()
+    result = []
+    for user in users:
+        user["_id"] = str(user["_id"])  # Convert ObjectId to string
+        user["password"] = "********"   # Hide password
+        result.append(user)
+    return {"companies": result}
+
 @router.post("/login")
 async def login_user(data: UserLogin):
     user = db["users"].find_one({"phone": data.phone})
