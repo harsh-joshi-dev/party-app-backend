@@ -15,3 +15,5 @@ class AppointmentCreate(BaseModel):
     cake_weight: Optional[float] = None
     note: Optional[str] = None
     company_id: str
+    payment: bool
+    payment_type: str
