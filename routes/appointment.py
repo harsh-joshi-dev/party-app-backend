@@ -66,14 +66,23 @@ async def get_appointments(company_id: str):
 
 # Delete Appointment
 @router.delete("/{id}")
-async def delete_appointment(id: str):
+async def delete_appointment(id: str, reason: str, deleted_by: str, refund_amount: float = 0.0, refund_reason: str = ""):
+    delete_info = {
+        "event_completed": "deleted",
+        "deleted_at": datetime.now(),
+        "delete_reason": reason,
+        "refund_amount": refund_amount,
+        "refund_reason": refund_reason,
+        "deleted_by": deleted_by
+    }
     result = appointments_collection.update_one(
         {"_id": ObjectId(id)},
-        {"$set": {"event_completed": "deleted"}}
+        {"$set": delete_info}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")
-    return {"message": "Appointment marked as deleted"}
+    return {"message": "Appointment marked as deleted with reason"}
+
 
 @router.get("/deleted")
 async def get_deleted_appointments(company_id: str):
@@ -87,7 +96,7 @@ async def get_deleted_appointments(company_id: str):
 
 # Update Appointment
 @router.put("/{id}")
-async def update_appointment(id: str, data: AppointmentCreate):
+async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = "Unknown"):
     update_data = data.dict()
 
     if isinstance(update_data["event_date"], date) and isinstance(update_data["event_start_time"], time):
@@ -99,6 +108,9 @@ async def update_appointment(id: str, data: AppointmentCreate):
     update_data.pop("event_start_time", None)
     update_data.pop("event_end_time", None)
 
+    update_data["last_edited_by"] = edited_by
+    update_data["last_edited_at"] = datetime.now()
+
     result = appointments_collection.update_one(
         {"_id": ObjectId(id)},
         {"$set": update_data}
@@ -106,6 +118,7 @@ async def update_appointment(id: str, data: AppointmentCreate):
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return {"message": "Appointment updated"}
+
 
 # Monthly Summary (Grouped by event_datetime)
 @router.get("/monthly-summary")

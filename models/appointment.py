@@ -25,3 +25,5 @@ class AppointmentCreate(BaseModel):
     payment_type: Optional[str] = None
     event_type: str
     event_completed: str
+    cake_price: Optional[float] = None
+    cake_note: Optional[str] = None
