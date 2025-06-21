@@ -3,10 +3,9 @@
 from twilio.rest import Client
 import os
 
-# Load these from environment variables or replace with test credentials directly
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_SID", "AC03454f94fbd351cc9d7a3b634f556aa5")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "6f73d3af63ec24e34aab344b374ffd73")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "+15005550006")  # Twilio test phone number
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
