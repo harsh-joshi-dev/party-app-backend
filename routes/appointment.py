@@ -17,12 +17,11 @@ async def create_appointment(data: AppointmentCreate):
     if not (appointment_dict.get("event_date") and appointment_dict.get("event_start_time") and appointment_dict.get("event_end_time")):
         raise HTTPException(status_code=400, detail="Missing date or time fields")
 
+    # Combine datetime for overlap checks
     event_start = datetime.combine(appointment_dict["event_date"], appointment_dict["event_start_time"])
     event_end = datetime.combine(appointment_dict["event_date"], appointment_dict["event_end_time"])
     appointment_dict["event_start_datetime"] = event_start
     appointment_dict["event_end_datetime"] = event_end
-
-    # Save event_date, event_start_time, and event_end_time
 
     # Overlap check
     overlapping = appointments_collection.find_one({
@@ -34,6 +33,11 @@ async def create_appointment(data: AppointmentCreate):
 
     if overlapping:
         raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
+
+    # ✅ Convert date and time fields to ISO strings before storing
+    appointment_dict["event_date"] = appointment_dict["event_date"].isoformat()
+    appointment_dict["event_start_time"] = appointment_dict["event_start_time"].isoformat()
+    appointment_dict["event_end_time"] = appointment_dict["event_end_time"].isoformat()
 
     result = appointments_collection.insert_one(appointment_dict)
     return {"message": "Appointment created", "id": str(result.inserted_id)}
