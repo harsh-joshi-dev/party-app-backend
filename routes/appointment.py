@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from models.appointment import AppointmentCreate
 from config.database import appointments_collection
 from bson import ObjectId
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
+from models.notification import send_sms, send_whatsapp
 
 router = APIRouter()
 
@@ -11,19 +12,17 @@ def is_overlap(start1, end1, start2, end2):
 
 # Create Appointment with overlap validation
 @router.post("/")
-async def create_appointment(data: AppointmentCreate):
+async def create_appointment(data: AppointmentCreate, background_tasks: BackgroundTasks):
     appointment_dict = data.dict()
 
     if not (appointment_dict.get("event_date") and appointment_dict.get("event_start_time") and appointment_dict.get("event_end_time")):
         raise HTTPException(status_code=400, detail="Missing date or time fields")
 
-    # Combine datetime for overlap checks
     event_start = datetime.combine(appointment_dict["event_date"], appointment_dict["event_start_time"])
     event_end = datetime.combine(appointment_dict["event_date"], appointment_dict["event_end_time"])
     appointment_dict["event_start_datetime"] = event_start
     appointment_dict["event_end_datetime"] = event_end
 
-    # Overlap check
     overlapping = appointments_collection.find_one({
         "company_id": appointment_dict["company_id"],
         "event_completed": {"$ne": "deleted"},
@@ -34,12 +33,23 @@ async def create_appointment(data: AppointmentCreate):
     if overlapping:
         raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
 
-    # Convert date and time fields to ISO strings before storing
     appointment_dict["event_date"] = appointment_dict["event_date"].isoformat()
     appointment_dict["event_start_time"] = appointment_dict["event_start_time"].isoformat()
     appointment_dict["event_end_time"] = appointment_dict["event_end_time"].isoformat()
 
     result = appointments_collection.insert_one(appointment_dict)
+
+    # Send SMS & WhatsApp
+    customer_phone = appointment_dict.get("customer_phone")
+    if customer_phone:
+        message = f"Hi {appointment_dict.get('customer_name')}, your booking for {appointment_dict.get('event_type')} is confirmed on {appointment_dict['event_date']} from {appointment_dict['event_start_time']} to {appointment_dict['event_end_time']}."
+        background_tasks.add_task(send_sms, customer_phone, message)
+        background_tasks.add_task(send_whatsapp, customer_phone, message)
+
+        # Schedule reminder 1 hour before
+        reminder_time = event_start - timedelta(hours=1)
+        background_tasks.add_task(send_sms, customer_phone, f"Reminder: Your event starts at {appointment_dict['event_start_time']} today.", delay_until=reminder_time)
+
     return {"message": "Appointment created", "id": str(result.inserted_id)}
 
 
@@ -87,7 +97,8 @@ async def get_appointments(company_id: str):
 
 
 @router.delete("/{id}")
-async def delete_appointment(id: str, reason: str, deleted_by: str, refund_amount: float = 0.0, refund_reason: str = ""):
+async def delete_appointment(id: str, reason: str, deleted_by: str, refund_amount: float = 0.0, refund_reason: str = "", background_tasks: BackgroundTasks = None):
+    appointment = appointments_collection.find_one({"_id": ObjectId(id)})
     delete_info = {
         "event_completed": "deleted",
         "deleted_at": datetime.now(),
@@ -102,6 +113,13 @@ async def delete_appointment(id: str, reason: str, deleted_by: str, refund_amoun
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")
+
+    # Notify customer
+    if appointment and background_tasks:
+        message = f"Hi {appointment.get('customer_name')}, your booking on {appointment.get('event_date')} has been cancelled. Refund: ₹{refund_amount}. Reason: {reason}."
+        background_tasks.add_task(send_sms, appointment.get("customer_phone"), message)
+        background_tasks.add_task(send_whatsapp, appointment.get("customer_phone"), message)
+
     return {"message": "Appointment marked as deleted with reason"}
 
 
@@ -117,7 +135,7 @@ async def get_deleted_appointments(company_id: str):
 
 
 @router.put("/{id}")
-async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = "Unknown"):
+async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = "Unknown", background_tasks: BackgroundTasks = None):
     update_data = data.dict()
 
     if update_data.get("event_date") and update_data.get("event_start_time") and update_data.get("event_end_time"):
@@ -126,7 +144,6 @@ async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = 
         update_data["event_start_datetime"] = event_start
         update_data["event_end_datetime"] = event_end
 
-        # Overlap check for update
         overlapping = appointments_collection.find_one({
             "company_id": update_data["company_id"],
             "event_completed": {"$ne": "deleted"},
@@ -138,7 +155,6 @@ async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = 
         if overlapping:
             raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
 
-        # Convert date and time fields to ISO strings
         update_data["event_date"] = update_data["event_date"].isoformat()
         update_data["event_start_time"] = update_data["event_start_time"].isoformat()
         update_data["event_end_time"] = update_data["event_end_time"].isoformat()
@@ -150,8 +166,15 @@ async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = 
         {"_id": ObjectId(id)},
         {"$set": update_data}
     )
+
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if background_tasks:
+        message = f"Hi {update_data.get('customer_name')}, your booking has been updated. New time: {update_data['event_start_time']} to {update_data['event_end_time']} on {update_data['event_date']}."
+        background_tasks.add_task(send_sms, update_data.get("customer_phone"), message)
+        background_tasks.add_task(send_whatsapp, update_data.get("customer_phone"), message)
+
     return {"message": "Appointment updated"}
 
 
@@ -171,7 +194,6 @@ async def monthly_summary(company_id: str):
     ]
     result = list(appointments_collection.aggregate(pipeline))
     total_appointments = appointments_collection.count_documents({"company_id": company_id})
-
     total_amount = sum(doc["total_amount"] for doc in result)
 
     return {
