@@ -34,7 +34,7 @@ async def create_appointment(data: AppointmentCreate):
     if overlapping:
         raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
 
-    # ✅ Convert date and time fields to ISO strings before storing
+    # Convert date and time fields to ISO strings before storing
     appointment_dict["event_date"] = appointment_dict["event_date"].isoformat()
     appointment_dict["event_start_time"] = appointment_dict["event_start_time"].isoformat()
     appointment_dict["event_end_time"] = appointment_dict["event_end_time"].isoformat()
@@ -132,11 +132,16 @@ async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = 
             "event_completed": {"$ne": "deleted"},
             "event_start_datetime": {"$lt": event_end},
             "event_end_datetime": {"$gt": event_start},
-            "_id": {"$ne": ObjectId(id)}  # exclude current
+            "_id": {"$ne": ObjectId(id)}
         })
 
         if overlapping:
             raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
+
+        # Convert date and time fields to ISO strings
+        update_data["event_date"] = update_data["event_date"].isoformat()
+        update_data["event_start_time"] = update_data["event_start_time"].isoformat()
+        update_data["event_end_time"] = update_data["event_end_time"].isoformat()
 
     update_data["last_edited_by"] = edited_by
     update_data["last_edited_at"] = datetime.now()
