@@ -7,7 +7,7 @@ from datetime import datetime, date, time
 router = APIRouter()
 
 def is_overlap(start1, end1, start2, end2):
-    return start1 < end2 and start2 < end1  # True if the time ranges overlap
+    return start1 < end2 and start2 < end1
 
 # Create Appointment with overlap validation
 @router.post("/")
@@ -21,6 +21,8 @@ async def create_appointment(data: AppointmentCreate):
     event_end = datetime.combine(appointment_dict["event_date"], appointment_dict["event_end_time"])
     appointment_dict["event_start_datetime"] = event_start
     appointment_dict["event_end_datetime"] = event_end
+
+    # Save event_date, event_start_time, and event_end_time
 
     # Overlap check
     overlapping = appointments_collection.find_one({
@@ -36,7 +38,7 @@ async def create_appointment(data: AppointmentCreate):
     result = appointments_collection.insert_one(appointment_dict)
     return {"message": "Appointment created", "id": str(result.inserted_id)}
 
-# Mark Event as Completed
+
 @router.put("/complete/{id}")
 async def mark_event_completed(id: str):
     result = appointments_collection.update_one(
@@ -80,7 +82,6 @@ async def get_appointments(company_id: str):
     }
 
 
-# Delete Appointment
 @router.delete("/{id}")
 async def delete_appointment(id: str, reason: str, deleted_by: str, refund_amount: float = 0.0, refund_reason: str = ""):
     delete_info = {
@@ -111,15 +112,27 @@ async def get_deleted_appointments(company_id: str):
     return deleted
 
 
-# Update Appointment
 @router.put("/{id}")
 async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = "Unknown"):
     update_data = data.dict()
 
-    if update_data.get("event_date") and update_data.get("event_start_time"):
-        update_data["event_start_datetime"] = datetime.combine(update_data["event_date"], update_data["event_start_time"])
-    if update_data.get("event_date") and update_data.get("event_end_time"):
-        update_data["event_end_datetime"] = datetime.combine(update_data["event_date"], update_data["event_end_time"])
+    if update_data.get("event_date") and update_data.get("event_start_time") and update_data.get("event_end_time"):
+        event_start = datetime.combine(update_data["event_date"], update_data["event_start_time"])
+        event_end = datetime.combine(update_data["event_date"], update_data["event_end_time"])
+        update_data["event_start_datetime"] = event_start
+        update_data["event_end_datetime"] = event_end
+
+        # Overlap check for update
+        overlapping = appointments_collection.find_one({
+            "company_id": update_data["company_id"],
+            "event_completed": {"$ne": "deleted"},
+            "event_start_datetime": {"$lt": event_end},
+            "event_end_datetime": {"$gt": event_start},
+            "_id": {"$ne": ObjectId(id)}  # exclude current
+        })
+
+        if overlapping:
+            raise HTTPException(status_code=409, detail="Slot is already booked for the selected time.")
 
     update_data["last_edited_by"] = edited_by
     update_data["last_edited_at"] = datetime.now()
@@ -133,7 +146,6 @@ async def update_appointment(id: str, data: AppointmentCreate, edited_by: str = 
     return {"message": "Appointment updated"}
 
 
-# Monthly Summary (Grouped by event_datetime)
 @router.get("/monthly-summary")
 async def monthly_summary(company_id: str):
     pipeline = [
