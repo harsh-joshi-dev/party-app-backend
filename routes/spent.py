@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.spent import SpentCreate
-from config.database import spents_collection, payments_collection
+from config.database import spents_collection, payments_collection, deleted_spents_collection
 from bson import ObjectId
 from datetime import datetime
 
@@ -8,12 +8,36 @@ router = APIRouter()
 
 @router.post("/")
 async def add_spent(data: SpentCreate):
-    spents_collection.insert_one(data.dict())
-    return {"message": "Spent added"}
+    if data.type == "Salary":
+        if not all([data.salary_person, data.salary_from, data.salary_to, data.salary_given_by, data.salary_payment_type]):
+            raise HTTPException(status_code=400, detail="Missing salary-related fields")
+        
+        existing = spents_collection.find_one({
+            "type": "Salary",
+            "salary_person": data.salary_person,
+            "company_id": data.company_id,
+            "salary_from": data.salary_from,
+            "salary_to": data.salary_to
+        })
+        if existing:
+            raise HTTPException(status_code=409, detail="Salary already given for this period")
+
+    elif data.type == "Expense":
+        if not all([data.item_name, data.expense_payment_type, data.expense_source]):
+            raise HTTPException(status_code=400, detail="Missing expense-related fields")
+        if data.expense_source == "Online" and not data.expense_source_url_or_site:
+            raise HTTPException(status_code=400, detail="Provide site name or URL for online purchases")
+
+    spent_dict = data.dict()
+    spent_dict["created_at"] = datetime.now()
+    spents_collection.insert_one(spent_dict)
+    return {"message": "Spent record added successfully"}
+
 
 @router.get("/")
 async def get_spents(company_id: str):
     return list(spents_collection.find({"company_id": company_id}))
+
 
 @router.put("/{id}")
 async def update_spent(id: str, data: SpentCreate):
@@ -24,6 +48,32 @@ async def update_spent(id: str, data: SpentCreate):
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Spent record not found")
     return {"message": "Spent record updated"}
+
+
+@router.delete("/{id}")
+async def delete_spent(id: str, reason: str):
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
+    
+    record = spents_collection.find_one({"_id": ObjectId(id)})
+    if not record:
+        raise HTTPException(status_code=404, detail="Spent record not found")
+    
+    # Append metadata and store in deleted collection
+    record["deleted_at"] = datetime.now()
+    record["deleted_reason"] = reason
+    deleted_spents_collection.insert_one(record)
+
+    # Remove from main collection
+    spents_collection.delete_one({"_id": ObjectId(id)})
+
+    return {"message": "Spent record deleted and archived"}
+
+
+@router.get("/deleted/list")
+async def get_deleted_spents(company_id: str):
+    return list(deleted_spents_collection.find({"company_id": company_id}))
+
 
 @router.get("/monthly-summary")
 async def spent_summary(company_id: str):
@@ -41,11 +91,12 @@ async def spent_summary(company_id: str):
             "total_payment": {"$sum": "$amount"},
         }}
     ]
+
     spent_summary = {f"{d['_id']['month']}-{d['_id']['year']}": d["total_spent"] for d in spents_collection.aggregate(spent_pipeline)}
     payment_summary = {f"{d['_id']['month']}-{d['_id']['year']}": d["total_payment"] for d in payments_collection.aggregate(payment_pipeline)}
 
     combined = {}
-    for key in set(list(spent_summary.keys()) + list(payment_summary.keys())):
+    for key in set(spent_summary.keys()) | set(payment_summary.keys()):
         combined[key] = spent_summary.get(key, 0) + payment_summary.get(key, 0)
 
     total_spent = sum(combined.values())
