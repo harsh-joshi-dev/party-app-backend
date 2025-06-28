@@ -15,18 +15,17 @@ def convert_date_fields(d: dict):
 @router.post("/")
 async def add_spent(data: SpentCreate):
     if data.type == "Salary":
-        if not all([data.salary_person, data.salary_from, data.salary_to, data.salary_given_by, data.salary_payment_type]):
+        if not all([data.salary_person, data.salary_month, data.salary_given_by, data.salary_payment_type]):
             raise HTTPException(status_code=400, detail="Missing salary-related fields")
-        
+
         existing = spents_collection.find_one({
             "type": "Salary",
             "salary_person": data.salary_person,
             "company_id": data.company_id,
-            "salary_from": datetime.combine(data.salary_from, datetime.min.time()),
-            "salary_to": datetime.combine(data.salary_to, datetime.min.time())
+            "salary_month": data.salary_month
         })
         if existing:
-            raise HTTPException(status_code=409, detail="Salary already given for this period")
+            raise HTTPException(status_code=409, detail="Salary already given for this month")
 
     elif data.type == "Expense":
         if not all([data.item_name, data.expense_payment_type, data.expense_source]):
@@ -35,12 +34,11 @@ async def add_spent(data: SpentCreate):
             raise HTTPException(status_code=400, detail="Provide site name or URL for online purchases")
 
     spent_dict = data.dict()
-    spent_dict = convert_date_fields(spent_dict)  # <-- Convert all date fields
+    spent_dict = convert_date_fields(spent_dict)
     spent_dict["created_at"] = datetime.now()
 
     spents_collection.insert_one(spent_dict)
     return {"message": "Spent record added successfully"}
-
 
 @router.get("/")
 async def get_spents(company_id: str):
