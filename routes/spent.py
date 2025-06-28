@@ -40,10 +40,19 @@ async def add_spent(data: SpentCreate):
     spents_collection.insert_one(spent_dict)
     return {"message": "Spent record added successfully"}
 
+def serialize_doc(doc):
+    for key, value in doc.items():
+        if isinstance(value, ObjectId):
+            doc[key] = str(value)
+        elif isinstance(value, dict):
+            doc[key] = serialize_doc(value)
+    return doc
+
+
 @router.get("/")
 async def get_spents(company_id: str):
-    return list(spents_collection.find({"company_id": company_id}))
-
+    spents = list(spents_collection.find({"company_id": company_id}))
+    return [serialize_doc(spent) for spent in spents]
 
 @router.put("/{id}")
 async def update_spent(id: str, data: SpentCreate):
