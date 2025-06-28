@@ -2,9 +2,15 @@ from fastapi import APIRouter, HTTPException
 from models.spent import SpentCreate
 from config.database import spents_collection, payments_collection, deleted_spents_collection
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, date
 
 router = APIRouter()
+
+def convert_date_fields(d: dict):
+    for key, value in d.items():
+        if isinstance(value, date) and not isinstance(value, datetime):
+            d[key] = datetime.combine(value, datetime.min.time())
+    return d
 
 @router.post("/")
 async def add_spent(data: SpentCreate):
@@ -16,8 +22,8 @@ async def add_spent(data: SpentCreate):
             "type": "Salary",
             "salary_person": data.salary_person,
             "company_id": data.company_id,
-            "salary_from": data.salary_from,
-            "salary_to": data.salary_to
+            "salary_from": datetime.combine(data.salary_from, datetime.min.time()),
+            "salary_to": datetime.combine(data.salary_to, datetime.min.time())
         })
         if existing:
             raise HTTPException(status_code=409, detail="Salary already given for this period")
@@ -29,7 +35,9 @@ async def add_spent(data: SpentCreate):
             raise HTTPException(status_code=400, detail="Provide site name or URL for online purchases")
 
     spent_dict = data.dict()
+    spent_dict = convert_date_fields(spent_dict)  # <-- Convert all date fields
     spent_dict["created_at"] = datetime.now()
+
     spents_collection.insert_one(spent_dict)
     return {"message": "Spent record added successfully"}
 
