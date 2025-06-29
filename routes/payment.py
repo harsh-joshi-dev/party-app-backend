@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from config.database import payments_collection, spents_collection, appointments_collection
 
 router = APIRouter()
@@ -18,7 +18,7 @@ async def financial_summary(company_id: str):
     ]
     payment_data = list(payments_collection.aggregate(payment_pipeline))
 
-    # 2. Aggregate Spents
+    # 2. Aggregate Spents (with salaries separated)
     spent_pipeline = [
         {"$match": {"company_id": company_id}},
         {"$group": {
@@ -26,7 +26,12 @@ async def financial_summary(company_id: str):
                 "year": {"$year": "$bought_date"},
                 "month": {"$month": "$bought_date"}
             },
-            "total_spent": {"$sum": "$amount"}
+            "total_spent": {"$sum": "$amount"},
+            "total_salary": {
+                "$sum": {
+                    "$cond": [{"$eq": ["$type", "Salary"]}, "$amount", 0]
+                }
+            }
         }}
     ]
     spent_data = list(spents_collection.aggregate(spent_pipeline))
@@ -51,40 +56,32 @@ async def financial_summary(company_id: str):
     # 4. Merge All Data into a Unified Summary
     summary = {}
 
-    # Payments
     for item in payment_data:
-        month = item["_id"].get("month")
-        year = item["_id"].get("year")
-        if month is None or year is None:
-            continue
-        key = f"{month:02d}-{year}"
-        summary[key] = {"payment": item["total_payment"], "spent": 0, "cake": 0}
+        m, y = item["_id"].get("month"), item["_id"].get("year")
+        if m is None or y is None: continue
+        key = f"{m:02d}-{y}"
+        summary[key] = {"payment": item["total_payment"], "spent": 0, "salary": 0, "cake": 0}
 
-    # Spents
     for item in spent_data:
-        month = item["_id"].get("month")
-        year = item["_id"].get("year")
-        if month is None or year is None:
-            continue
-        key = f"{month:02d}-{year}"
+        m, y = item["_id"].get("month"), item["_id"].get("year")
+        if m is None or y is None: continue
+        key = f"{m:02d}-{y}"
         if key not in summary:
-            summary[key] = {"payment": 0, "spent": 0, "cake": 0}
-        summary[key]["spent"] += item["total_spent"]
+            summary[key] = {"payment": 0, "spent": 0, "salary": 0, "cake": 0}
+        summary[key]["spent"] += item.get("total_spent", 0)
+        summary[key]["salary"] += item.get("total_salary", 0)
 
-    # Cake Costs
     for item in cake_data:
-        month = item["_id"].get("month")
-        year = item["_id"].get("year")
-        if month is None or year is None:
-            continue
-        key = f"{month:02d}-{year}"
+        m, y = item["_id"].get("month"), item["_id"].get("year")
+        if m is None or y is None: continue
+        key = f"{m:02d}-{y}"
         if key not in summary:
-            summary[key] = {"payment": 0, "spent": 0, "cake": 0}
-        summary[key]["cake"] += item["total_cake_spent"]
+            summary[key] = {"payment": 0, "spent": 0, "salary": 0, "cake": 0}
+        summary[key]["cake"] += item.get("total_cake_spent", 0)
 
     # 5. Compile Final Monthly Summary
     final_summary = []
-    gross_payment = gross_spent = gross_cake = 0
+    gross_payment = gross_spent = gross_salary = gross_cake = 0
 
     def sort_key(key: str):
         m, y = map(int, key.split("-"))
@@ -92,20 +89,24 @@ async def financial_summary(company_id: str):
 
     for month_key in sorted(summary.keys(), key=sort_key):
         data = summary[month_key]
-        payment = data.get("payment", 0)
-        spent = data.get("spent", 0)
-        cake = data.get("cake", 0)
+        payment = data["payment"]
+        spent = data["spent"]
+        salary = data["salary"]
+        cake = data["cake"]
+
         total_spent = spent + cake
         left = payment - total_spent
 
         gross_payment += payment
         gross_spent += spent
+        gross_salary += salary
         gross_cake += cake
 
         final_summary.append({
             "month": month_key,
             "amount_paid": round(payment, 2),
             "amount_spent": round(spent, 2),
+            "amount_spent_on_salary": round(salary, 2),
             "amount_spent_on_cake": round(cake, 2),
             "total_spent": round(total_spent, 2),
             "amount_left": round(left, 2)
@@ -116,6 +117,7 @@ async def financial_summary(company_id: str):
         "monthly_summary": final_summary,
         "total_paid": round(gross_payment, 2),
         "total_spent": round(gross_spent, 2),
+        "total_salary": round(gross_salary, 2),
         "total_cake_spent": round(gross_cake, 2),
         "gross_total_spent": round(gross_spent + gross_cake, 2),
         "total_left": round(gross_payment - (gross_spent + gross_cake), 2)
