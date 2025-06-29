@@ -1,24 +1,30 @@
 from fastapi import APIRouter
-from config.database import payments_collection, spents_collection, appointments_collection
+from config.database import appointments_collection, spents_collection
 
 router = APIRouter()
 
 @router.get("/financial-summary")
 async def financial_summary(company_id: str):
-    # 1. Aggregate Payments
-    payment_pipeline = [
-        {"$match": {"company_id": company_id}},
+    # 1. Appointments: booking + add-ons + cake
+    appointment_pipeline = [
+        {"$match": {
+            "company_id": company_id,
+            "event_completed": {"$ne": "deleted"},
+            "booking_price": {"$exists": True},
+        }},
         {"$group": {
             "_id": {
-                "year": {"$year": "$paid_date"},
-                "month": {"$month": "$paid_date"}
+                "year": {"$year": "$event_start_datetime"},
+                "month": {"$month": "$event_start_datetime"}
             },
-            "total_payment": {"$sum": "$amount"}
+            "total_booking_amount": {"$sum": {"$toDouble": "$booking_price"}},
+            "total_addon_amount": {"$sum": {"$toDouble": {"$ifNull": ["$add_ons_price", 0]}}},
+            "total_cake_spent": {"$sum": {"$toDouble": {"$ifNull": ["$cake_price", 0]}}}
         }}
     ]
-    payment_data = list(payments_collection.aggregate(payment_pipeline))
+    appointment_data = list(appointments_collection.aggregate(appointment_pipeline))
 
-    # 2. Aggregate Spents (with salaries separated)
+    # 2. Spent: Salary and Expense separation
     spent_pipeline = [
         {"$match": {"company_id": company_id}},
         {"$group": {
@@ -26,99 +32,95 @@ async def financial_summary(company_id: str):
                 "year": {"$year": "$bought_date"},
                 "month": {"$month": "$bought_date"}
             },
-            "total_spent": {"$sum": "$amount"},
             "total_salary": {
                 "$sum": {
                     "$cond": [{"$eq": ["$type", "Salary"]}, "$amount", 0]
+                }
+            },
+            "total_expense": {
+                "$sum": {
+                    "$cond": [{"$eq": ["$type", "Expense"]}, "$amount", 0]
                 }
             }
         }}
     ]
     spent_data = list(spents_collection.aggregate(spent_pipeline))
 
-    # 3. Aggregate Cake Prices from Appointments
-    cake_pipeline = [
-        {"$match": {
-            "company_id": company_id,
-            "event_completed": {"$ne": "deleted"},
-            "cake_price": {"$exists": True, "$gt": 0}
-        }},
-        {"$group": {
-            "_id": {
-                "year": {"$year": "$event_start_datetime"},
-                "month": {"$month": "$event_start_datetime"}
-            },
-            "total_cake_spent": {"$sum": {"$toDouble": "$cake_price"}}
-        }}
-    ]
-    cake_data = list(appointments_collection.aggregate(cake_pipeline))
-
-    # 4. Merge All Data into a Unified Summary
+    # 3. Merge All
     summary = {}
 
-    for item in payment_data:
+    # Appointments
+    for item in appointment_data:
         m, y = item["_id"].get("month"), item["_id"].get("year")
         if m is None or y is None: continue
         key = f"{m:02d}-{y}"
-        summary[key] = {"payment": item["total_payment"], "spent": 0, "salary": 0, "cake": 0}
+        summary[key] = {
+            "booking": item.get("total_booking_amount", 0),
+            "addon": item.get("total_addon_amount", 0),
+            "cake": item.get("total_cake_spent", 0),
+            "salary": 0,
+            "expense": 0
+        }
 
+    # Spents
     for item in spent_data:
         m, y = item["_id"].get("month"), item["_id"].get("year")
         if m is None or y is None: continue
         key = f"{m:02d}-{y}"
         if key not in summary:
-            summary[key] = {"payment": 0, "spent": 0, "salary": 0, "cake": 0}
-        summary[key]["spent"] += item.get("total_spent", 0)
+            summary[key] = {
+                "booking": 0,
+                "addon": 0,
+                "cake": 0,
+                "salary": 0,
+                "expense": 0
+            }
         summary[key]["salary"] += item.get("total_salary", 0)
+        summary[key]["expense"] += item.get("total_expense", 0)
 
-    for item in cake_data:
-        m, y = item["_id"].get("month"), item["_id"].get("year")
-        if m is None or y is None: continue
-        key = f"{m:02d}-{y}"
-        if key not in summary:
-            summary[key] = {"payment": 0, "spent": 0, "salary": 0, "cake": 0}
-        summary[key]["cake"] += item.get("total_cake_spent", 0)
+    # 4. Final Output
+    final = []
+    total_booking = total_addon = total_cake = total_salary = total_expense = 0
 
-    # 5. Compile Final Monthly Summary
-    final_summary = []
-    gross_payment = gross_spent = gross_salary = gross_cake = 0
+    def sort_key(k): m, y = map(int, k.split("-")); return y, m
 
-    def sort_key(key: str):
-        m, y = map(int, key.split("-"))
-        return y, m
-
-    for month_key in sorted(summary.keys(), key=sort_key):
-        data = summary[month_key]
-        payment = data["payment"]
-        spent = data["spent"]
-        salary = data["salary"]
+    for month in sorted(summary.keys(), key=sort_key):
+        data = summary[month]
+        booking = data["booking"]
+        addon = data["addon"]
         cake = data["cake"]
+        salary = data["salary"]
+        expense = data["expense"]
+        total_income = booking + addon
+        amount_spent = salary + expense
+        left = total_income - amount_spent
 
-        total_spent = spent + cake
-        left = payment - total_spent
+        total_booking += booking
+        total_addon += addon
+        total_cake += cake
+        total_salary += salary
+        total_expense += expense
 
-        gross_payment += payment
-        gross_spent += spent
-        gross_salary += salary
-        gross_cake += cake
-
-        final_summary.append({
-            "month": month_key,
-            "amount_paid": round(payment, 2),
-            "amount_spent": round(spent, 2),
+        final.append({
+            "month": month,
+            "total_booking_amount": round(booking, 2),
+            "total_addon_amount": round(addon, 2),
+            "total_income": round(total_income, 2),
             "amount_spent_on_salary": round(salary, 2),
-            "amount_spent_on_cake": round(cake, 2),
-            "total_spent": round(total_spent, 2),
+            "total_expense": round(expense, 2),
+            "amount_spent": round(amount_spent, 2),
+            "total_spent_on_cake": round(cake, 2),
             "amount_left": round(left, 2)
         })
 
-    # 6. Return Response
     return {
-        "monthly_summary": final_summary,
-        "total_paid": round(gross_payment, 2),
-        "total_spent": round(gross_spent, 2),
-        "total_salary": round(gross_salary, 2),
-        "total_cake_spent": round(gross_cake, 2),
-        "gross_total_spent": round(gross_spent + gross_cake, 2),
-        "total_left": round(gross_payment - (gross_spent + gross_cake), 2)
+        "monthly_summary": final,
+        "total_booking_amount": round(total_booking, 2),
+        "total_addon_amount": round(total_addon, 2),
+        "total_income": round(total_booking + total_addon, 2),
+        "total_spent_on_salary": round(total_salary, 2),
+        "total_expense": round(total_expense, 2),
+        "total_spent": round(total_salary + total_expense, 2),
+        "total_spent_on_cake": round(total_cake, 2),
+        "total_left": round((total_booking + total_addon) - (total_salary + total_expense), 2)
     }
