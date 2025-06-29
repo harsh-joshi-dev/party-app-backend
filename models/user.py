@@ -19,3 +19,12 @@ class UserLogin(BaseModel):
 class PasswordReset(BaseModel):
     phone: str
     new_password: str
+
+class UserCreateCompany(BaseModel):
+    phone: str
+    alt_phone: Optional[str] = None
+    password: str
+    email: str
+    address: str
+    company_name: str
+    user_type: str  # Should be 'admin'

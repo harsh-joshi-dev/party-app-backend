@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from models.user import UserCreate, UserLogin, PasswordReset
+from models.user import UserCreate, UserLogin, PasswordReset, UserCreateCompany
 from config.database import db
 from utils import hash_password, verify_password
 
 router = APIRouter()
 
 @router.post("/create-company")
-async def create_company(data: UserCreate):
+async def create_company(data: UserCreateCompany):
     if data.user_type.lower() != "admin":
         raise HTTPException(status_code=400, detail="user_type must be 'admin' for company creation")
 
@@ -22,7 +22,6 @@ async def create_company(data: UserCreate):
         "user_type": "admin",
         "alt_phone": data.alt_phone,
         "email": data.email,
-        "username": data.username,
     }
 
     result = db["users"].insert_one(company)
