@@ -62,20 +62,27 @@ async def get_all_companies():
         result.append(user_dict)
     return {"companies": result}
 
-
 @router.post("/login")
 async def login_user(data: UserLogin):
     user = db["users"].find_one({"phone": data.phone})
-    if not user or not verify_password(data.password, user["password"]):
+
+    if not user or not verify_password(data.password, user.get("password", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    is_company = user["user_type"] == "admin"
-    company_id = str(user["_id"]) if is_company else str(user["company_id"])
+    user_type = user.get("user_type")
+    if not user_type:
+        raise HTTPException(status_code=400, detail="User type not found in user data")
+
+    is_company = user_type == "admin"
+    company_id = str(user["_id"]) if is_company else str(user.get("company_id"))
+
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Company ID missing")
 
     return {
         "message": "Login successful",
         "company_id": company_id,
-        "user_type": user["user_type"],
+        "user_type": user_type,
         "username": user.get("username", "")
     }
 

@@ -56,13 +56,18 @@ async def get_spents(company_id: str):
 
 @router.put("/{id}")
 async def update_spent(id: str, data: SpentCreate):
+    update_data = data.dict(exclude_unset=True)
+    update_data = convert_date_fields(update_data)
+    update_data["updated_at"] = datetime.now()
+
     result = spents_collection.update_one(
         {"_id": ObjectId(id)},
-        {"$set": data.dict()}
+        {"$set": update_data}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Spent record not found")
-    return {"message": "Spent record updated"}
+
+    return {"message": "Spent record updated successfully"}
 
 
 @router.delete("/{id}")
@@ -87,7 +92,8 @@ async def delete_spent(id: str, reason: str):
 
 @router.get("/deleted/list")
 async def get_deleted_spents(company_id: str):
-    return list(deleted_spents_collection.find({"company_id": company_id}))
+    deleted = list(deleted_spents_collection.find({"company_id": company_id}))
+    return [serialize_doc(spent) for spent in deleted]
 
 
 @router.get("/monthly-summary")
