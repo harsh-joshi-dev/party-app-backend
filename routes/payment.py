@@ -53,19 +53,31 @@ async def financial_summary(company_id: str):
 
     # Payments
     for item in payment_data:
-        key = f"{item['_id']['month']:02d}-{item['_id']['year']}"
+        month = item["_id"].get("month")
+        year = item["_id"].get("year")
+        if month is None or year is None:
+            continue
+        key = f"{month:02d}-{year}"
         summary[key] = {"payment": item["total_payment"], "spent": 0, "cake": 0}
 
     # Spents
     for item in spent_data:
-        key = f"{item['_id']['month']:02d}-{item['_id']['year']}"
+        month = item["_id"].get("month")
+        year = item["_id"].get("year")
+        if month is None or year is None:
+            continue
+        key = f"{month:02d}-{year}"
         if key not in summary:
             summary[key] = {"payment": 0, "spent": 0, "cake": 0}
         summary[key]["spent"] += item["total_spent"]
 
-    # Cakes
+    # Cake Costs
     for item in cake_data:
-        key = f"{item['_id']['month']:02d}-{item['_id']['year']}"
+        month = item["_id"].get("month")
+        year = item["_id"].get("year")
+        if month is None or year is None:
+            continue
+        key = f"{month:02d}-{year}"
         if key not in summary:
             summary[key] = {"payment": 0, "spent": 0, "cake": 0}
         summary[key]["cake"] += item["total_cake_spent"]
@@ -74,9 +86,9 @@ async def financial_summary(company_id: str):
     final_summary = []
     gross_payment = gross_spent = gross_cake = 0
 
-    def sort_key(key):
-        month, year = map(int, key.split('-'))
-        return year, month
+    def sort_key(key: str):
+        m, y = map(int, key.split("-"))
+        return y, m
 
     for month_key in sorted(summary.keys(), key=sort_key):
         data = summary[month_key]
