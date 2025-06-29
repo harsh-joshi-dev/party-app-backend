@@ -13,14 +13,14 @@ async def financial_summary(company_id: str):
             "event_start_datetime": {"$exists": True},
         }},
         {"$addFields": {
-            "booking_amount": {"$toDouble": "$booking_amount"},
+            "booking_amount": {"$toDouble": {"$ifNull": ["$booking_amount", "0"]}},
             "cake_price": {"$toDouble": {"$ifNull": ["$cake_price", 0]}},
             "addon_total": {
                 "$sum": {
                     "$map": {
                         "input": {"$ifNull": ["$tags", []]},
                         "as": "tag",
-                        "in": {"$toDouble": {"$ifNull": ["$$tag.price", 0]}}
+                        "in": {"$toDouble": {"$ifNull": ["$$tag.price", "0"]}}
                     }
                 }
             }
@@ -87,7 +87,9 @@ async def financial_summary(company_id: str):
     final = []
     tb = ta = tc = ts = te = 0
 
-    def sort_key(k): m, y = map(int, k.split("-")); return y, m
+    def sort_key(k): 
+        m, y = map(int, k.split("-"))
+        return y, m
 
     for month in sorted(summary.keys(), key=sort_key):
         d = summary[month]
