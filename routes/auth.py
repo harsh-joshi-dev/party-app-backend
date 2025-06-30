@@ -5,6 +5,7 @@ from utils import hash_password, verify_password
 
 router = APIRouter()
 
+
 @router.post("/create-company")
 async def create_company(data: UserCreateCompany):
     if data.user_type.lower() != "admin":
@@ -38,11 +39,66 @@ async def register_user(data: UserCreate):
     existing = db["users"].find_one({"phone": data.phone})
     if existing:
         raise HTTPException(status_code=400, detail="Phone already registered")
+
     user = data.dict()
     user["password"] = hash_password(user["password"])
     user["user_type"] = "admin" if data.user_type == "company" else data.user_type
+
+    # Ensure company_id is stored as string if present
+    if "company_id" in user and user["company_id"]:
+        user["company_id"] = str(user["company_id"])
+
     db["users"].insert_one(user)
     return {"message": "User registered successfully", "user_type": user["user_type"]}
+
+
+@router.post("/login")
+async def login_user(data: UserLogin):
+    user = db["users"].find_one({"phone": data.phone})
+
+    if not user or not verify_password(data.password, user.get("password", "")):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    user_type = user.get("user_type")
+    if not user_type:
+        raise HTTPException(status_code=400, detail="User type not found in user data")
+
+    if user_type == "admin":
+        company_id = str(user["_id"])
+    else:
+        company_id = str(user.get("company_id"))
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Company ID missing for employee")
+
+    return {
+        "message": "Login successful",
+        "company_id": company_id,
+        "user_type": user_type,
+        "username": user.get("username", "")
+    }
+
+
+@router.post("/create-employee")
+async def create_employee(data: UserCreate):
+    if not data.company_id:
+        raise HTTPException(status_code=400, detail="company_id is required for employee")
+
+    existing = db["users"].find_one({"phone": data.phone})
+    if existing:
+        raise HTTPException(status_code=400, detail="Phone already registered")
+
+    employee = {
+        "username": data.username,
+        "phone": data.phone,
+        "password": hash_password(data.password),
+        "user_type": "employee",
+        "company_id": str(data.company_id),  # Store as string
+        "alt_phone": data.alt_phone,
+        "email": data.email,
+    }
+
+    db["users"].insert_one(employee)
+    return {"message": "Employee created successfully"}
 
 
 @router.get("/companies")
@@ -61,51 +117,6 @@ async def get_all_companies():
         result.append(user_dict)
     return {"companies": result}
 
-@router.post("/login")
-async def login_user(data: UserLogin):
-    user = db["users"].find_one({"phone": data.phone})
-
-    if not user or not verify_password(data.password, user.get("password", "")):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    user_type = user.get("user_type")
-    if not user_type:
-        raise HTTPException(status_code=400, detail="User type not found in user data")
-
-    is_company = user_type == "admin"
-    company_id = str(user["_id"]) if is_company else str(user.get("company_id"))
-
-    if not company_id:
-        raise HTTPException(status_code=400, detail="Company ID missing")
-
-    return {
-        "message": "Login successful",
-        "company_id": company_id,
-        "user_type": user_type,
-        "username": user.get("username", "")
-    }
-
-@router.post("/create-employee")
-async def create_employee(data: UserCreate):
-    if not data.company_id:
-        raise HTTPException(status_code=400, detail="company_id is required for employee")
-
-    existing = db["users"].find_one({"phone": data.phone})
-    if existing:
-        raise HTTPException(status_code=400, detail="Phone already registered")
-
-    employee = {
-        "username": data.username,
-        "phone": data.phone,
-        "password": hash_password(data.password),
-        "user_type": "employee",
-        "company_id": data.company_id,
-        "alt_phone": data.alt_phone,
-        "email": data.email,
-    }
-
-    db["users"].insert_one(employee)
-    return {"message": "Employee created successfully"}
 
 @router.get("/employees/{company_id}")
 async def get_employees_by_company(company_id: str):
@@ -124,7 +135,11 @@ async def get_employees_by_company(company_id: str):
 @router.get("/appointments/{company_id}")
 async def get_appointments_by_company(company_id: str):
     appointments = db["appointments"].find({"company_id": company_id})
-    return {"appointments": [dict(appt, _id=str(appt["_id"])) for appt in appointments]}
+    return {
+        "appointments": [
+            dict(appt, _id=str(appt["_id"])) for appt in appointments
+        ]
+    }
 
 
 @router.post("/reset-password")
@@ -132,5 +147,9 @@ async def reset_password(data: PasswordReset):
     user = db["users"].find_one({"phone": data.phone})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    db["users"].update_one({"phone": data.phone}, {"$set": {"password": hash_password(data.new_password)}})
+
+    db["users"].update_one(
+        {"phone": data.phone},
+        {"$set": {"password": hash_password(data.new_password)}}
+    )
     return {"message": "Password reset successfully"}
