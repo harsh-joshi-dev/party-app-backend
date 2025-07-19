@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from models.appointment import AppointmentCreate
 from config.database import appointments_collection
 from bson import ObjectId
@@ -201,3 +201,70 @@ async def monthly_summary(company_id: str):
         "total_appointments": total_appointments,
         "total_amount": total_amount
     }
+
+
+@router.get("/available-slots")
+async def get_available_slots(
+    date_str: str = Query(..., description="Date in YYYY-MM-DD format"),
+    duration_minutes: int = Query(..., description="Duration in minutes (30, 60, 120, 180)"),
+    company_id: str = Query(..., description="Company ID")
+):
+    """
+    Returns available booking slots for a given date and duration.
+    Booking window: 10:00 AM to 1:00 AM next day.
+    """
+    # Parse date
+    try:
+        booking_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    # Booking window
+    start_time = time(10, 0)  # 10:00 AM
+    end_time = time(1, 0)     # 1:00 AM (next day)
+    slot_delta = timedelta(minutes=duration_minutes)
+
+    # Generate all possible slots
+    slots = []
+    current_dt = datetime.combine(booking_date, start_time)
+    # End boundary: 1:00 AM next day
+    if end_time < start_time:
+        end_boundary = datetime.combine(booking_date + timedelta(days=1), end_time)
+    else:
+        end_boundary = datetime.combine(booking_date, end_time)
+
+    while current_dt + slot_delta <= end_boundary:
+        slots.append((current_dt, current_dt + slot_delta))
+        current_dt += timedelta(minutes=30)  # move in 30-min increments
+
+    # Fetch existing bookings for the day (including those that may cross midnight)
+    day_start = datetime.combine(booking_date, start_time)
+    day_end = end_boundary
+    bookings = list(appointments_collection.find({
+        "company_id": company_id,
+        "event_completed": {"$ne": "deleted"},
+        "$or": [
+            {"event_start_datetime": {"$lt": day_end, "$gte": day_start}},
+            {"event_end_datetime": {"$gt": day_start, "$lte": day_end}},
+            {"event_start_datetime": {"$lte": day_start}, "event_end_datetime": {"$gte": day_end}}
+        ]
+    }))
+    # Prepare list of (start, end) datetimes for booked slots
+    booked_ranges = [
+        (b["event_start_datetime"], b["event_end_datetime"]) for b in bookings
+    ]
+
+    # Helper: check overlap
+    def overlaps(slot_start, slot_end, booked_start, booked_end):
+        return slot_start < booked_end and booked_start < slot_end
+
+    # Filter out slots that overlap with any booking
+    available_slots = []
+    for slot_start, slot_end in slots:
+        if not any(overlaps(slot_start, slot_end, b_start, b_end) for b_start, b_end in booked_ranges):
+            available_slots.append({
+                "start": slot_start.isoformat(),
+                "end": slot_end.isoformat()
+            })
+
+    return {"available_slots": available_slots}
